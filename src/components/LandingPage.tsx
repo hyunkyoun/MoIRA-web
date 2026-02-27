@@ -5,10 +5,6 @@ import Link from 'next/link';
 import { Dna, BrainCircuit, BarChart2, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-interface LandingPageProps {
-  onLogin: () => void;
-}
-
 const FEATURES = [
   {
     Icon: Dna,
@@ -40,7 +36,7 @@ const STATS = [
   { number: 'AI',    label: 'Driven insights engine' },
 ];
 
-export default function LandingPage({ onLogin }: LandingPageProps) {
+export default function LandingPage() {
   const featuresRef = useRef<HTMLElement>(null);
 
   const scrollToFeatures = () => {
@@ -56,9 +52,11 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
           <button className="nav-link" onClick={scrollToFeatures}>Capabilities</button>
           <Link href="/pricing" className="nav-link">Pricing</Link>
-          <Button variant="ghost" onClick={onLogin} style={{ marginLeft: '0.5rem' }}>
-            Sign In <span style={{ letterSpacing: 0 }}>→</span>
-          </Button>
+          <Link href="/auth/signin" style={{ marginLeft: '0.5rem' }}>
+            <Button variant="ghost">
+              Sign In <span style={{ letterSpacing: 0 }}>→</span>
+            </Button>
+          </Link>
         </div>
       </nav>
 
@@ -87,10 +85,12 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
           </p>
 
           <div className="hero-cta anim-fade-up d-500">
-            <Button variant="default" onClick={onLogin}>
-              Begin Analysis
-              <span style={{ letterSpacing: 0 }}>→</span>
-            </Button>
+            <Link href="/auth/signup">
+              <Button variant="default">
+                Begin Analysis
+                <span style={{ letterSpacing: 0 }}>→</span>
+              </Button>
+            </Link>
             <Button variant="ghost" onClick={scrollToFeatures}>
               Learn More
             </Button>
@@ -200,10 +200,10 @@ export default function LandingPage({ onLogin }: LandingPageProps) {
           MoIRA is the precision platform for multi-omics research teams.
           Start integrating your biological datasets today.
         </p>
-        <button className="cta-btn" onClick={onLogin}>
+        <Link href="/auth/signup" className="cta-btn">
           <span>Begin Analysis</span>
           <span className="btn-arrow">→</span>
-        </button>
+        </Link>
       </section>
 
       {/* ── Footer ────────────────────────────────────────────────── */}

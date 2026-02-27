@@ -42,3 +42,12 @@ next-env.d.ts
 
 # claude code
 .claude
+
+# python virtual environment
+.venv
+
+# local temp storage for backend
+backend/temp
+
+__pycache__
+*.pyc

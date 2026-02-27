@@ -1,0 +1,25 @@
+# Web framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Auth
+PyJWT[crypto]
+
+# AI
+requests
+
+# Data science (Python-side analysis)
+pandas
+numpy
+scikit-learn
+scipy
+matplotlib
+seaborn
+
+# R integration (requires R 4.0+ installed on the system)
+rpy2
+
+# Optional: for reading Excel samplesheets
+openpyxl
+xlrd
