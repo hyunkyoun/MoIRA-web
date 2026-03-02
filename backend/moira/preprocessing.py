@@ -228,8 +228,16 @@ def _prepare_targets(
         )
         return None
 
+    # Format the beadchip ID as an integer string to match IDAT file names
+    # (e.g. 208319490008.0 → "208319490008", not "208319490008.0")
+    def _fmt_id(val) -> str:
+        try:
+            return str(int(float(val)))
+        except (ValueError, TypeError):
+            return str(val)
+
     targets["basename"] = (
-        targets[beadchip_col].astype(str) + "_" + targets[position_col].astype(str)
+        targets[beadchip_col].apply(_fmt_id) + "_" + targets[position_col].astype(str)
     )
 
     if sample_id_col and sample_id_col in targets.columns:

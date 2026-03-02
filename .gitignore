@@ -49,5 +49,8 @@ next-env.d.ts
 # local temp storage for backend
 backend/temp
 
+# R packages installed locally (do not commit — run install_r_packages.R to rebuild)
+backend/r_packages/
+
 __pycache__
 *.pyc

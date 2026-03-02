@@ -2178,6 +2178,222 @@ body {
   color: rgba(10, 22, 40, 0.28);
 }
 
+/* Run Pipeline button — lives inside .chat-bar, to the right of the textarea */
+.run-pipeline-btn {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #2560E0;
+  background: transparent;
+  border: 1px solid rgba(37, 96, 224, 0.35);
+  border-radius: 9px;
+  padding: 0 1rem;
+  height: 40px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+  align-self: flex-end;
+  outline: none;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.run-pipeline-btn:hover:not(:disabled) {
+  background: rgba(37, 96, 224, 0.07);
+  border-color: rgba(37, 96, 224, 0.6);
+}
+
+.run-pipeline-btn:disabled:not(.run-pipeline-btn--active) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.run-pipeline-btn--active {
+  color: rgba(37, 96, 224, 0.55);
+  border-color: rgba(37, 96, 224, 0.2);
+  cursor: not-allowed;
+}
+
+/* ── Plot results ────────────────────────────────────────────────────── */
+
+.plot-result-section {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 580px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.plot-result-label {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.5625rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(10, 22, 40, 0.28);
+  margin-bottom: 0.125rem;
+}
+
+/* Compact list card — matches .ai-result-card border style */
+.plot-entry-list {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.88);
+  background-image:
+    linear-gradient(to right, rgba(37, 96, 224, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(37, 96, 224, 0.025) 1px, transparent 1px);
+  background-size: 24px 24px;
+  border: 1px solid rgba(37, 96, 224, 0.1);
+  border-top: 2px solid rgba(37, 96, 224, 0.28);
+  overflow: hidden;
+  animation: thought-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* One row per plot */
+.plot-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid rgba(37, 96, 224, 0.06);
+}
+
+.plot-entry:last-child { border-bottom: none; }
+
+.plot-entry-label {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  color: rgba(10, 22, 40, 0.55);
+}
+
+.plot-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* Preview button */
+.plot-preview-btn {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #2560E0;
+  background: rgba(37, 96, 224, 0.06);
+  border: 1px solid rgba(37, 96, 224, 0.28);
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.plot-preview-btn:hover {
+  background: rgba(37, 96, 224, 0.12);
+  border-color: rgba(37, 96, 224, 0.5);
+}
+
+/* Download button (shared by entry row + modal) */
+.plot-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #2560E0;
+  background: transparent;
+  border: 1px solid rgba(37, 96, 224, 0.28);
+  border-radius: 4px;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.plot-download-btn:hover {
+  background: rgba(37, 96, 224, 0.06);
+  border-color: rgba(37, 96, 224, 0.5);
+}
+
+/* ── Plot preview modal ──────────────────────────────────────────────── */
+
+.plot-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 22, 40, 0.52);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: thought-rise 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.plot-modal {
+  background: #fff;
+  border: 1px solid rgba(37, 96, 224, 0.12);
+  border-top: 2px solid rgba(37, 96, 224, 0.35);
+  max-width: min(88vw, 920px);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.plot-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.875rem 1.5rem 0.75rem;
+  border-bottom: 1px solid rgba(37, 96, 224, 0.08);
+  background: rgba(248, 251, 255, 0.6);
+  flex-shrink: 0;
+  gap: 1rem;
+}
+
+.plot-modal-title {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.5625rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(10, 22, 40, 0.28);
+}
+
+.plot-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.plot-modal-close {
+  font-family: var(--font-mono), monospace;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: rgba(10, 22, 40, 0.28);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  transition: color 0.15s ease;
+}
+
+.plot-modal-close:hover { color: rgba(10, 22, 40, 0.65); }
+
+.plot-modal-img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(88vh - 56px);
+  object-fit: contain;
+  background: #fff;
+  padding: 1.5rem 2rem;
+}
+
 /* Each step row */
 .pipeline-step-v {
   display: flex;
@@ -2308,6 +2524,7 @@ body {
 .analysis-center-panel {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -2328,6 +2545,7 @@ body {
 
 /* AI result card displayed in center */
 .ai-result-card {
+  flex-shrink: 0;
   width: 100%;
   max-width: 580px;
   background: rgba(255, 255, 255, 0.88);
@@ -2474,6 +2692,7 @@ body {
 
 /* Loading / status hint in the center area */
 .center-loading-hint {
+  flex-shrink: 0;
   font-family: var(--font-mono), monospace;
   font-size: 0.6875rem;
   letter-spacing: 0.1em;
@@ -2580,6 +2799,7 @@ body {
 /* ── Chat messages ── */
 
 .chat-message {
+  flex-shrink: 0;
   max-width: 520px;
   width: fit-content;
   padding: 0.625rem 1rem;
@@ -2609,7 +2829,8 @@ body {
 /* ── Bottom chat bar ── */
 
 .chat-bar {
-  width: 100%;
+  align-self: center;
+  width: calc(100% - 3rem);
   max-width: 720px;
   padding: 0.625rem 0.625rem 0.625rem 1rem;
   display: flex;

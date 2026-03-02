@@ -173,6 +173,106 @@ CRITICAL: Respond with valid JSON ONLY. No text before or after the JSON.
                 time.sleep(2**attempt)
         raise RuntimeError(f"OpenRouter request failed after {max_retries} attempts: {last_error}")
 
+    def _make_messages_request(self, messages: List[Dict], max_retries: int = 3) -> str:
+        """Make a chat-style request with a full messages array."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 1500,
+        }
+        last_error: str = "Unknown error"
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post(
+                    self.BASE_URL, headers=headers, json=payload, timeout=60
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if "error" in data:
+                        last_error = f"OpenAI model error: {data['error']}"
+                        logger.warning(last_error)
+                    else:
+                        msg = data["choices"][0]["message"]
+                        content = msg.get("content") or ""
+                        if not content.strip():
+                            last_error = "Model returned empty content"
+                            logger.warning(last_error)
+                        else:
+                            return content
+                else:
+                    try:
+                        body = resp.json()
+                        last_error = (
+                            f"OpenAI {resp.status_code}: "
+                            f"{body.get('error', {}).get('message', resp.text[:300])}"
+                        )
+                    except Exception:
+                        last_error = f"OpenAI {resp.status_code}: {resp.text[:300]}"
+                    logger.warning(last_error)
+            except Exception as exc:
+                last_error = str(exc)
+                logger.error("Request attempt %d/%d failed: %s", attempt + 1, max_retries, exc)
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+        raise RuntimeError(f"OpenAI request failed after {max_retries} attempts: {last_error}")
+
+    def chat(
+        self,
+        message: str,
+        history: List[Dict[str, str]],
+        column_mappings: Dict[str, str],
+        workflow_steps: List[str],
+        analysis_prompt: str,
+    ) -> Tuple[str, Optional[Dict[str, str]]]:
+        """
+        Send a conversational message with analysis context.
+
+        Returns:
+            (reply_text, updated_column_mappings)
+            updated_column_mappings is None if the user did not request a remapping.
+        """
+        if not self.api_key:
+            raise ValueError("OpenAI API key is not configured.")
+
+        system_content = (
+            "You are MoIRA, an AI assistant specializing in multi-omics data analysis "
+            "(methylation, genomics, transcriptomics, proteomics, metabolomics). "
+            "You have already analyzed a samplesheet and configured a pipeline for the user.\n\n"
+            f"Analysis context:\n"
+            f"- User's analysis goal: {analysis_prompt or 'General methylation analysis'}\n"
+            f"- Current column mappings: {json.dumps(column_mappings)}\n"
+            f"- Configured workflow steps: {', '.join(workflow_steps)}\n\n"
+            "RESPONSE RULES:\n"
+            "1. When the user asks to change, remap, add, or remove a column mapping, "
+            "respond with a JSON object and nothing else:\n"
+            '   {"reply": "your explanation", "column_mappings": {"concept": "column", ...}}\n'
+            "   Include ALL mappings (changed and unchanged) in column_mappings.\n"
+            "2. For all other messages (questions, analysis, explanations), reply with plain text only. "
+            "Do NOT wrap plain-text replies in JSON."
+        )
+
+        messages = [{"role": "system", "content": system_content}]
+        for h in history:
+            messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": message})
+
+        raw = self._make_messages_request(messages)
+
+        # Try to parse as a structured mapping-update response
+        try:
+            normalized = self._normalize_json(raw)
+            data = json.loads(normalized)
+            if isinstance(data, dict) and "reply" in data and "column_mappings" in data:
+                return data["reply"], data["column_mappings"]
+        except Exception:
+            pass
+
+        return raw, None
+
     def _normalize_json(self, text: str) -> str:
         """Strip <think> blocks, markdown fences, and extract the first JSON object."""
         import re
@@ -392,18 +492,34 @@ class MoIRA:
                         raise RuntimeError(
                             "combat_normalization requires targets (samplesheet)."
                         )
-                    batch_col = self.column_mappings.get("batch", "batch")
-                    res = preprocessing.combat_normalization(
-                        betas=current_betas,
-                        targets=current_targets,
-                        batch_column=batch_col,
+                    # _prepare_targets normalises the mapped batch column to "batch".
+                    # Fall back to the raw mapped name in case normalisation didn't run.
+                    batch_col = (
+                        "batch" if "batch" in current_targets.columns
+                        else self.column_mappings.get("batch")
                     )
-                    current_betas = res["betas_combat"]
-                    results["combat_normalization"] = {
-                        "n_batches": res["batch_info"]["n_batches"],
-                        "batches": res["batch_info"]["batches"],
-                        "batch_column": batch_col,
-                    }
+                    if not batch_col or batch_col not in current_targets.columns:
+                        logger.warning(
+                            "combat_normalization skipped: no batch column found in targets "
+                            "(column_mappings has no 'batch' key or the column is absent). "
+                            "Verify the samplesheet has a batch column and re-run."
+                        )
+                        results["combat_normalization"] = {
+                            "skipped": True,
+                            "reason": "No batch column detected in samplesheet.",
+                        }
+                    else:
+                        res = preprocessing.combat_normalization(
+                            betas=current_betas,
+                            targets=current_targets,
+                            batch_column=batch_col,
+                        )
+                        current_betas = res["betas_combat"]
+                        results["combat_normalization"] = {
+                            "n_batches": res["batch_info"]["n_batches"],
+                            "batches": res["batch_info"]["batches"],
+                            "batch_column": batch_col,
+                        }
 
                 elif step == "basic_statistics":
                     if current_betas is None:

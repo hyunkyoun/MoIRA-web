@@ -11,8 +11,9 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:800
 type ViewState = 'upload' | 'transitioning' | 'analysis';
 
 interface ChatMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'mapping';
   text: string;
+  mappings?: Record<string, string>;
 }
 type StepStatus = 'completed' | 'running' | 'pending';
 
@@ -23,6 +24,7 @@ interface UploadState {
 
 interface PipelineStepV {
   id: number;
+  name: string;
   label: string;
   sub: string;
   status: StepStatus;
@@ -164,15 +166,24 @@ const PipelineIcon = () => (
   </svg>
 );
 
+const DownloadIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="7 10 12 15 17 10" />
+    <line x1="12" y1="15" x2="12" y2="3" />
+  </svg>
+);
+
 /* ── Static Data ────────────────────────────────────────────────────────── */
 
 const PIPELINE_STEPS_V: PipelineStepV[] = [
-  { id: 1, label: 'Data Ingestion',        sub: 'Files loaded',          status: 'completed', icon: <IconDatabase /> },
-  { id: 2, label: 'QC & Validation',       sub: 'Format checks',         status: 'running',   icon: <IconShield />   },
-  { id: 3, label: 'Normalization',          sub: 'Batch correction',      status: 'pending',   icon: <IconSliders />  },
-  { id: 4, label: 'Differential Analysis', sub: 'Statistical modeling',  status: 'pending',   icon: <IconBarChart /> },
-  { id: 5, label: 'Pathway Enrichment',    sub: 'Gene set analysis',     status: 'pending',   icon: <IconNetwork />  },
-  { id: 6, label: 'Report Generation',     sub: 'Figures + summary',     status: 'pending',   icon: <IconFileText /> },
+  { id: 1, name: 'read_idat_files',       label: 'Data Ingestion',         sub: 'Files loaded',          status: 'completed', icon: <IconDatabase /> },
+  { id: 2, name: 'quality_control',       label: 'QC & Validation',        sub: 'Format checks',         status: 'running',   icon: <IconShield />   },
+  { id: 3, name: 'combat_normalization',  label: 'Normalization',          sub: 'Batch correction',      status: 'pending',   icon: <IconSliders />  },
+  { id: 4, name: 'differential_analysis', label: 'Differential Analysis',  sub: 'Statistical modeling',  status: 'pending',   icon: <IconBarChart /> },
+  { id: 5, name: 'perform_pca',           label: 'Pathway Enrichment',     sub: 'Gene set analysis',     status: 'pending',   icon: <IconNetwork />  },
+  { id: 6, name: 'create_volcano_plot',   label: 'Report Generation',      sub: 'Figures + summary',     status: 'pending',   icon: <IconFileText /> },
 ];
 
 const AI_THOUGHTS = [
@@ -204,15 +215,31 @@ export default function Dashboard({ userId }: { userId: string }) {
   const [pipelineSteps, setPipelineSteps]   = useState<PipelineStepV[]>([]);
   const [columnMappings, setColumnMappings] = useState<Record<string, string>>({});
   const [messages, setMessages]             = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading]       = useState(false);
+  const [jobId, setJobId]                   = useState<string | null>(null);
+  const [jobStatus, setJobStatus]           = useState<'idle' | 'pending' | 'running' | 'completed' | 'failed'>('idle');
+  const [jobResult, setJobResult]           = useState<Record<string, unknown> | null>(null);
+  const [plotUrls, setPlotUrls]             = useState<{ label: string; blobUrl: string; filename: string }[]>([]);
+  const [previewPlot, setPreviewPlot]       = useState<{ label: string; blobUrl: string; filename: string } | null>(null);
 
   const router         = useRouter();
   const trainingRef    = useRef<HTMLInputElement>(null);
   const configRef      = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const pollingRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const plotBlobsRef   = useRef<string[]>([]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, []);
+
+  useEffect(() => {
+    return () => { plotBlobsRef.current.forEach(u => URL.revokeObjectURL(u)); };
+  }, []);
 
   /* ── Upload handlers ── */
 
@@ -299,6 +326,7 @@ export default function Dashboard({ userId }: { userId: string }) {
 
     return steps.map((name, i) => ({
       id: i + 1,
+      name,
       ...labelFor(name),
       icon: iconFor(name),
       status: 'pending' as StepStatus,
@@ -366,7 +394,9 @@ export default function Dashboard({ userId }: { userId: string }) {
         setColumnMappings(column_mappings);
         setPipelineSteps(buildPipelineSteps(workflow_steps));
 
-        // Minimal thought log — details are shown in the center panel
+        // Push initial mapping card into the conversation stream
+        setMessages([{ role: 'mapping', text: '', mappings: column_mappings }]);
+
         setAiThoughts([
           'Samplesheet parsed and uploaded.',
           `Detected ${Object.keys(column_mappings).length} column mapping${Object.keys(column_mappings).length !== 1 ? 's' : ''}.`,
@@ -394,9 +424,231 @@ export default function Dashboard({ userId }: { userId: string }) {
 
   const handleChatSend = () => {
     const text = chatInput.trim();
-    if (!text) return;
-    setMessages(prev => [...prev, { role: 'user', text }]);
+    if (!text || chatLoading) return;
+
+    const userMsg: ChatMessage = { role: 'user', text };
+    setMessages(prev => [...prev, userMsg]);
     setChatInput('');
+    setChatLoading(true);
+
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error('Not authenticated');
+
+        // Build history for the API — exclude mapping cards (UI-only, not valid OpenAI roles)
+        const history = messages
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .map(m => ({ role: m.role, content: m.text }));
+
+        const res = await fetch(`${BACKEND_URL}/chat`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: text,
+            history,
+            column_mappings: columnMappings,
+            workflow_steps: pipelineSteps.map(s => s.label),
+            analysis_prompt: aiPrompt,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail ?? `Chat failed (${res.status})`);
+        }
+
+        const { reply, column_mappings } = await res.json() as {
+          reply: string;
+          column_mappings: Record<string, string> | null;
+        };
+        setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
+        if (column_mappings) {
+          setColumnMappings(column_mappings);
+          setMessages(prev => [...prev, { role: 'mapping', text: '', mappings: column_mappings }]);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setMessages(prev => [...prev, { role: 'assistant', text: `Error: ${msg}` }]);
+      } finally {
+        setChatLoading(false);
+      }
+    })();
+  };
+
+  /* ── Pipeline run ── */
+
+  const buildResultSummary = (result: Record<string, unknown>): string => {
+    const lines: string[] = ['Pipeline complete.'];
+    const r0 = result.read_idat_files as Record<string, unknown> | undefined;
+    if (r0 && !r0.error) {
+      lines.push(`Data ingestion: ${(r0.n_probes as number)?.toLocaleString() ?? '?'} probes × ${r0.n_samples ?? '?'} samples loaded.`);
+    }
+    const r1 = result.quality_control as Record<string, unknown> | undefined;
+    if (r1 && !r1.error) {
+      lines.push(`QC: retained ${(r1.n_probes_after_qc as number)?.toLocaleString() ?? '?'} probes × ${r1.n_samples_after_qc ?? '?'} samples.`);
+      if (r1.sex_cpgs_removed) lines.push('Sex chromosome CpGs removed.');
+    }
+    const r2 = result.combat_normalization as Record<string, unknown> | undefined;
+    if (r2 && r2.skipped) {
+      lines.push(`ComBat normalization skipped: ${r2.reason}`);
+    } else if (r2 && !r2.error) {
+      lines.push(`ComBat: corrected ${r2.n_batches ?? '?'} batch${r2.n_batches !== 1 ? 'es' : ''}.`);
+    }
+    if (result.basic_statistics && !(result.basic_statistics as Record<string, unknown>).error)
+      lines.push('Basic statistics computed.');
+    if (result.perform_pca && !(result.perform_pca as Record<string, unknown>).error)
+      lines.push('PCA analysis complete.');
+    if (result.create_heatmap && !(result.create_heatmap as Record<string, unknown>).error)
+      lines.push('Correlation heatmap generated.');
+    if (result.differential_analysis && !(result.differential_analysis as Record<string, unknown>).error)
+      lines.push('Differential methylation analysis complete.');
+    if (result.create_volcano_plot && !(result.create_volcano_plot as Record<string, unknown>).error)
+      lines.push('Volcano plot generated.');
+
+    // Surface any per-step errors
+    for (const [step, v] of Object.entries(result)) {
+      if (v && typeof v === 'object' && 'error' in (v as object)) {
+        lines.push(`Warning — ${step}: ${(v as Record<string, unknown>).error}`);
+      }
+    }
+    return lines.join('\n');
+  };
+
+  const startPolling = (id: string) => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+
+    pollingRef.current = setInterval(async () => {
+      try {
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+
+        const res = await fetch(`${BACKEND_URL}/jobs/${id}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (!res.ok) return;
+
+        const job = await res.json() as {
+          status: string;
+          step: string | null;
+          step_idx: number;
+          total_steps: number;
+          error: string | null;
+        };
+
+        setJobStatus(job.status as 'idle' | 'pending' | 'running' | 'completed' | 'failed');
+
+        if (job.step_idx > 0) {
+          setPipelineSteps(prev => prev.map(s => ({
+            ...s,
+            status: (s.id < job.step_idx ? 'completed'
+              : s.id === job.step_idx ? 'running'
+              : 'pending') as StepStatus,
+          })));
+        }
+
+        if (job.status === 'completed') {
+          clearInterval(pollingRef.current!);
+          pollingRef.current = null;
+          setPipelineSteps(prev => prev.map(s => ({ ...s, status: 'completed' as StepStatus })));
+          try {
+            const rRes = await fetch(`${BACKEND_URL}/jobs/${id}/result`, {
+              headers: { Authorization: `Bearer ${session.access_token}` },
+            });
+            if (rRes.ok) {
+              const data = await rRes.json() as { result: Record<string, unknown> };
+              setJobResult(data.result);
+              setMessages(prev => [...prev, { role: 'assistant', text: buildResultSummary(data.result) }]);
+              fetchPlots(data.result, session.access_token);
+            }
+          } catch { /* ignore */ }
+        } else if (job.status === 'failed') {
+          clearInterval(pollingRef.current!);
+          pollingRef.current = null;
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            text: `Pipeline failed: ${job.error ?? 'Unknown error'}`,
+          }]);
+        }
+      } catch { /* ignore transient errors */ }
+    }, 2500);
+  };
+
+  const handleRunPipeline = async () => {
+    setJobStatus('pending');
+    setJobResult(null);
+    plotBlobsRef.current.forEach(u => URL.revokeObjectURL(u));
+    plotBlobsRef.current = [];
+    setPlotUrls([]);
+    setPipelineSteps(prev => prev.map(s => ({ ...s, status: 'pending' as StepStatus })));
+
+    try {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const res = await fetch(`${BACKEND_URL}/run`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          workflow_steps: pipelineSteps.map(s => s.name),
+          column_mappings: columnMappings,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { detail?: string }).detail ?? `Run failed (${res.status})`);
+      }
+
+      const { job_id } = await res.json() as { job_id: string };
+      setJobId(job_id);
+      startPolling(job_id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setJobStatus('failed');
+      setMessages(prev => [...prev, { role: 'assistant', text: `Failed to start pipeline: ${msg}` }]);
+    }
+  };
+
+  /* ── Plot fetching ── */
+
+  const PLOT_LABELS: Record<string, string> = {
+    perform_pca:        'PCA Analysis',
+    create_heatmap:     'Heatmap',
+    create_volcano_plot:'Volcano Plot',
+  };
+
+  const fetchPlots = async (result: Record<string, unknown>, token: string) => {
+    const entries: { label: string; blobUrl: string; filename: string }[] = [];
+    for (const [step, val] of Object.entries(result)) {
+      if (!val || typeof val !== 'object') continue;
+      const v = val as Record<string, unknown>;
+      if (!Array.isArray(v.plot_files) || v.plot_files.length === 0) continue;
+      const label = PLOT_LABELS[step] ?? step.replace(/_/g, ' ');
+      for (const filePath of v.plot_files as string[]) {
+        const filename = (filePath as string).split('/').pop() ?? filePath;
+        try {
+          const res = await fetch(`${BACKEND_URL}/plots/${userId}/${filename}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) continue;
+          const blob = await res.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          plotBlobsRef.current.push(blobUrl);
+          entries.push({ label, blobUrl, filename });
+        } catch { /* skip */ }
+      }
+    }
+    setPlotUrls(entries);
   };
 
   /* ── Helpers ── */
@@ -578,66 +830,96 @@ export default function Dashboard({ userId }: { userId: string }) {
                   </div>
                 )}
 
-                {analyzeStatus === 'done' && (
-                  <div className="ai-result-card">
-
-                    {/* Card header — matches workspace panel header pattern */}
-                    <div className="ai-result-card-header">
-                      <span className="ai-result-card-title">Analysis Result</span>
-                      <span className="ai-resolved-badge">
-                        <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
-                          <circle cx="12" cy="12" r="5" />
-                        </svg>
-                        AI
-                      </span>
-                    </div>
-
-                    <div className="ai-result-card-body">
-
-                      {/* Column Mappings */}
-                      {Object.keys(columnMappings).length > 0 && (
-                        <>
-                          <div className="ai-result-section-label">
-                            Column Mappings — {Object.keys(columnMappings).length} detected
-                          </div>
-                          {Object.entries(columnMappings).map(([concept, col]) => (
-                            <div key={concept} className="mapping-row">
-                              <span className="mapping-concept">{concept}</span>
-                              <span className="mapping-arrow">→</span>
-                              <span className="mapping-column">{col}</span>
-                            </div>
-                          ))}
-                        </>
-                      )}
-
-                    </div>
-                  </div>
-                )}
-
                 {analyzeStatus === 'error' && (
                   <div className="center-loading-hint" style={{ color: 'rgba(220,50,50,0.7)' }}>
                     Analysis failed — see error in the status panel →
                   </div>
                 )}
 
-                {/* Chat messages — rendered last so they appear below analysis cards */}
-                {messages.map((msg, i) => (
-                  <div key={i} className={`chat-message chat-message--${msg.role}`}>
-                    {msg.text}
+                {/* Conversation stream — mapping cards + chat messages interleaved */}
+                {messages.map((msg, i) => {
+                  if (msg.role === 'mapping' && msg.mappings) {
+                    return (
+                      <div key={i} className="ai-result-card">
+                        <div className="ai-result-card-header">
+                          <span className="ai-result-card-title">Column Mappings</span>
+                          <span className="ai-resolved-badge">
+                            <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+                              <circle cx="12" cy="12" r="5" />
+                            </svg>
+                            AI
+                          </span>
+                        </div>
+                        <div className="ai-result-card-body">
+                          <div className="ai-result-section-label">
+                            {Object.keys(msg.mappings).length} mapping{Object.keys(msg.mappings).length !== 1 ? 's' : ''} detected
+                          </div>
+                          {Object.entries(msg.mappings).map(([concept, col]) => (
+                            <div key={concept} className="mapping-row">
+                              <span className="mapping-concept">{concept}</span>
+                              <span className="mapping-arrow">→</span>
+                              <span className="mapping-column">{col}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={i} className={`chat-message chat-message--${msg.role}`}>
+                      {msg.text}
+                    </div>
+                  );
+                })}
+                {chatLoading && (
+                  <div className="chat-message chat-message--assistant">
+                    <span className="ai-thought-cursor" />
                   </div>
-                ))}
+                )}
+
+                {/* ── Generated plots ── */}
+                {plotUrls.length > 0 && (
+                  <div className="plot-result-section">
+                    <div className="plot-result-label">Generated Plots</div>
+                    <div className="plot-entry-list">
+                      {plotUrls.map((p, i) => (
+                        <div key={i} className="plot-entry">
+                          <span className="plot-entry-label">{p.label}</span>
+                          <div className="plot-entry-actions">
+                            <button
+                              className="plot-preview-btn"
+                              onClick={() => setPreviewPlot(p)}
+                            >
+                              Preview
+                            </button>
+                            <a
+                              className="plot-download-btn"
+                              href={p.blobUrl}
+                              download={p.filename}
+                            >
+                              <DownloadIcon />
+                              Download
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div ref={messagesEndRef} />
 
               </div>
 
               {/* Chat bar pinned at bottom */}
-              <div className="chat-bar" style={{ margin: '0 1.5rem' }}>
+              <div className="chat-bar">
                 <textarea
                   className="chat-textarea"
                   value={chatInput}
                   onChange={e => setChatInput(e.target.value)}
                   placeholder="Ask MoIRA about your analysis…"
                   rows={1}
+                  disabled={chatLoading}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -645,19 +927,31 @@ export default function Dashboard({ userId }: { userId: string }) {
                     }
                   }}
                 />
+                {analyzeStatus === 'done' && (
+                  <button
+                    className={`run-pipeline-btn${jobStatus === 'running' || jobStatus === 'pending' ? ' run-pipeline-btn--active' : ''}`}
+                    onClick={handleRunPipeline}
+                    disabled={jobStatus === 'running' || jobStatus === 'pending' || jobStatus === 'completed'}
+                  >
+                    {jobStatus === 'idle'       ? 'Run Pipeline'
+                      : jobStatus === 'pending'  ? 'Starting…'
+                      : jobStatus === 'running'  ? 'Running…'
+                      : jobStatus === 'completed' ? 'Completed'
+                      : 'Retry'}
+                  </button>
+                )}
                 <button
                   className="chat-send-btn"
                   onClick={handleChatSend}
-                  disabled={!chatInput.trim()}
+                  disabled={!chatInput.trim() || chatLoading}
                 >
                   <SendIcon />
-                  <span>Send</span>
                 </button>
               </div>
             </div>
 
-            {/* Right: AI thought process */}
-            <div className="ai-thoughts-panel">
+            {/* Right: AI thought process — commented out for now */}
+            {/* <div className="ai-thoughts-panel">
               <div className="ai-thoughts-header">
                 <div className={`ai-thoughts-pulse${analyzeStatus === 'loading' ? ' ai-thoughts-pulse--active' : ''}`} />
                 <span className="ai-thoughts-title">
@@ -668,7 +962,6 @@ export default function Dashboard({ userId }: { userId: string }) {
                 </span>
               </div>
 
-              {/* Loading state */}
               {analyzeStatus === 'loading' && aiThoughts.length === 0 && (
                 <div className="ai-thought-line" style={{ animationDelay: '0.1s' }}>
                   <span className="ai-thought-prefix">›</span>
@@ -679,7 +972,6 @@ export default function Dashboard({ userId }: { userId: string }) {
                 </div>
               )}
 
-              {/* Real thoughts from AI */}
               {aiThoughts.map((thought, i) => (
                 <div
                   key={i}
@@ -699,7 +991,6 @@ export default function Dashboard({ userId }: { userId: string }) {
                 </div>
               ))}
 
-              {/* Blinking cursor — shown while loading or after done */}
               {(analyzeStatus === 'loading' || analyzeStatus === 'done') && (
                 <div
                   className="ai-thought-line"
@@ -709,11 +1000,35 @@ export default function Dashboard({ userId }: { userId: string }) {
                   <span><span className="ai-thought-cursor" /></span>
                 </div>
               )}
-            </div>
+            </div> */}
 
           </div>
 
         </div>
+
+        {/* ── Plot preview modal ── */}
+        {previewPlot && (
+          <div className="plot-modal-overlay" onClick={() => setPreviewPlot(null)}>
+            <div className="plot-modal" onClick={e => e.stopPropagation()}>
+              <div className="plot-modal-header">
+                <span className="plot-modal-title">{previewPlot.label}</span>
+                <div className="plot-modal-actions">
+                  <a
+                    className="plot-download-btn"
+                    href={previewPlot.blobUrl}
+                    download={previewPlot.filename}
+                  >
+                    <DownloadIcon />
+                    Download
+                  </a>
+                  <button className="plot-modal-close" onClick={() => setPreviewPlot(null)}>×</button>
+                </div>
+              </div>
+              <img className="plot-modal-img" src={previewPlot.blobUrl} alt={previewPlot.label} />
+            </div>
+          </div>
+        )}
+
       </div>
     );
   }

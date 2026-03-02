@@ -13,6 +13,16 @@ Endpoints:
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+load_dotenv()
+
+import logging
+logging.getLogger("moira").setLevel(logging.INFO)
+if not logging.getLogger("moira").handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    logging.getLogger("moira").addHandler(_h)
+
 import asyncio
 import json
 import os
@@ -185,6 +195,19 @@ class RunRequest(BaseModel):
     column_mappings: Dict[str, str]
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: List[ChatMessage]
+    column_mappings: Dict[str, str]
+    workflow_steps: List[str]
+    analysis_prompt: str
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -314,6 +337,44 @@ async def analyze(
         "column_mappings": column_mappings,
         "workflow_steps": workflow_steps,
     }
+
+
+@app.post("/chat")
+async def chat(
+    body: ChatRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Conversational AI endpoint.
+
+    Accepts a user message plus the full conversation history and analysis
+    context, then returns a single assistant reply.
+    """
+    verify_token(authorization)
+
+    if not _OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="Server misconfiguration: OPENAI_API_KEY is not set.",
+        )
+
+    try:
+        from moira.core import OpenRouterAI
+
+        ai = OpenRouterAI(api_key=_OPENAI_API_KEY)
+        reply, updated_mappings = ai.chat(
+            message=body.message,
+            history=[{"role": m.role, "content": m.content} for m in body.history],
+            column_mappings=body.column_mappings,
+            workflow_steps=body.workflow_steps,
+            analysis_prompt=body.analysis_prompt,
+        )
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {"reply": reply, "column_mappings": updated_mappings}
 
 
 @app.post("/run")

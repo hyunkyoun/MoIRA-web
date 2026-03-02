@@ -8,6 +8,7 @@ PyJWT[crypto]
 
 # AI
 requests
+python-dotenv
 
 # Data science (Python-side analysis)
 pandas
