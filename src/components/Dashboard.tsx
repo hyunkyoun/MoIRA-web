@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { createClient } from '@/lib/supabase/client';
+import { ProfileDropdown } from './ProfileDropdown';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000';
 
@@ -222,7 +222,6 @@ export default function Dashboard({ userId }: { userId: string }) {
   const [plotUrls, setPlotUrls]             = useState<{ label: string; blobUrl: string; filename: string }[]>([]);
   const [previewPlot, setPreviewPlot]       = useState<{ label: string; blobUrl: string; filename: string } | null>(null);
 
-  const router         = useRouter();
   const trainingRef    = useRef<HTMLInputElement>(null);
   const configRef      = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -279,13 +278,6 @@ export default function Dashboard({ userId }: { userId: string }) {
     e.stopPropagation();
     setter({ file: null, isDragging: false });
     if (ref.current) ref.current.value = '';
-  };
-
-  const handleSignOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push('/');
-    router.refresh();
   };
 
   /* ── Step name → display metadata ── */
@@ -685,7 +677,7 @@ export default function Dashboard({ userId }: { userId: string }) {
           </svg>
         </div>
       </div>
-      <Button variant="ghost" onClick={handleSignOut}>Sign Out</Button>
+      <ProfileDropdown />
     </nav>
   );
 
@@ -1050,7 +1042,7 @@ export default function Dashboard({ userId }: { userId: string }) {
               <span className="accent-line" />
               Upload Assets
             </div>
-            <h1 className="page-title" style={{ marginBottom: '1rem' }}>
+            {/* <h1 className="page-title" style={{ marginBottom: '1rem' }}>
               Upload Your<br />
               <span style={{
                 fontStyle: 'italic',
@@ -1059,13 +1051,13 @@ export default function Dashboard({ userId }: { userId: string }) {
               }}>
                 Data
               </span>
-            </h1>
-            <p className="page-subtitle">
+            </h1> */}
+            {/* <p className="page-subtitle">
               Provide your dataset and samplesheet to begin your analysis.
-            </p>
+            </p> */}
           </div>
 
-          <div className="section-rule anim-fade-in d-200" style={{ marginBottom: '2.75rem' }} />
+          {/* <div className="section-rule anim-fade-in d-200" style={{ marginBottom: '2.75rem' }} /> */}
 
           {/* Upload Cards */}
           <div className="upload-zone anim-fade-up d-300" style={{ marginBottom: '2.75rem' }}>
@@ -1094,7 +1086,7 @@ export default function Dashboard({ userId }: { userId: string }) {
                   raw or processed measurements that will be analyzed.
                 </p>
                 <div className="file-tags">
-                  {['.jsonl', '.csv', '.txt', '.json', '.zip'].map(ext => (
+                  {['.zip'].map(ext => (
                     <span key={ext} className="file-tag">{ext}</span>
                   ))}
                 </div>
